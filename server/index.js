@@ -46,7 +46,17 @@ const sessions = new Map();
  * Main skill generation endpoint
  * Body: multipart/form-data with fields: goal, definitionOfDone, options (JSON), files[]
  */
-app.post('/api/generate', upload.array('files', 10), async (req, res) => {
+const uploadMiddleware = (req, res, next) => {
+  upload.array('files', 10)(req, res, (err) => {
+    if (err) {
+      // Ignore multer errors (e.g. no files), continue with empty files
+      req.files = req.files || [];
+    }
+    next();
+  });
+};
+
+app.post('/api/generate', uploadMiddleware, async (req, res) => {
   const sessionId = uuid();
   try {
     const { goal, definitionOfDone, options: optionsStr } = req.body;
@@ -79,26 +89,34 @@ app.post('/api/generate', upload.array('files', 10), async (req, res) => {
       finalSkill = generateSkillLocally({ goal, definitionOfDone, documents, options });
       validation = validateSkillLocally(finalSkill);
     } else {
-      // API-based generation
-      const skillContent = await generateSkill({ goal, definitionOfDone, documents, options });
-
-      validation = null;
+      // API-based generation with fallback to local
       try {
-        validation = await validateSkill(skillContent);
-      } catch (e) {
-        console.warn(`[${sessionId}] Validation failed:`, e.message);
-      }
+        const skillContent = await generateSkill({ goal, definitionOfDone, documents, options });
 
-      finalSkill = skillContent;
-      if (validation && validation.score < 7 && validation.issues?.some(i => i.severity === 'P0')) {
-        console.log(`[${sessionId}] Auto-refining (score: ${validation.score})...`);
+        validation = null;
         try {
-          finalSkill = await refineSkill(skillContent, validation.issues);
-          validation = await validateSkill(finalSkill);
-          refined = true;
+          validation = await validateSkill(skillContent);
         } catch (e) {
-          console.warn(`[${sessionId}] Refinement failed:`, e.message);
+          console.warn(`[${sessionId}] Validation failed, using local:`, e.message);
+          validation = validateSkillLocally(skillContent);
         }
+
+        finalSkill = skillContent;
+        if (validation && validation.score < 7 && validation.issues?.some(i => i.severity === 'P0')) {
+          console.log(`[${sessionId}] Auto-refining (score: ${validation.score})...`);
+          try {
+            finalSkill = await refineSkill(skillContent, validation.issues);
+            validation = await validateSkill(finalSkill);
+            refined = true;
+          } catch (e) {
+            console.warn(`[${sessionId}] Refinement failed:`, e.message);
+          }
+        }
+      } catch (apiErr) {
+        // Fallback to local generation on API error
+        console.warn(`[${sessionId}] API failed, falling back to local:`, apiErr.message);
+        finalSkill = generateSkillLocally({ goal, definitionOfDone, documents, options });
+        validation = validateSkillLocally(finalSkill);
       }
     }
 

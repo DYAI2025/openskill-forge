@@ -10,6 +10,13 @@ const API = '/api';
 const state = {
   step: 'input', // input | loading | result
   files: [],
+  form: {
+    goal: '',
+    definitionOfDone: '',
+    skillName: '',
+    language: '',
+    constraints: '',
+  },
   result: null,
   validation: null,
   sessionId: null,
@@ -67,7 +74,7 @@ function renderInputForm() {
         id="goal"
         class="goal-input"
         placeholder="Describe what the skill should do. Be specific about functionality, triggers, and expected behavior..."
-      ></textarea>
+      >${escapeHtml(state.form.goal)}</textarea>
     </div>
 
     <!-- Definition of Done -->
@@ -77,7 +84,7 @@ function renderInputForm() {
         id="dod"
         class="dod-input"
         placeholder="When is the skill 'done'? E.g.: Must handle edge cases X/Y, output must include Z, must not do W..."
-      ></textarea>
+      >${escapeHtml(state.form.definitionOfDone)}</textarea>
     </div>
 
     <!-- Documents -->
@@ -110,15 +117,15 @@ function renderInputForm() {
       <div class="options-panel ${state.showOptions ? '' : 'hidden'}" id="optionsPanel">
         <div class="option-row">
           <label>Skill Name</label>
-          <input type="text" id="optName" placeholder="auto-generated if empty" />
+          <input type="text" id="optName" placeholder="auto-generated if empty" value="${escapeHtml(state.form.skillName)}" />
         </div>
         <div class="option-row">
           <label>Language</label>
-          <input type="text" id="optLang" placeholder="auto-detect from goal" />
+          <input type="text" id="optLang" placeholder="auto-detect from goal" value="${escapeHtml(state.form.language)}" />
         </div>
         <div class="option-row">
           <label>Constraints</label>
-          <input type="text" id="optConstraints" placeholder="e.g.: No external API calls, must work offline" />
+          <input type="text" id="optConstraints" placeholder="e.g.: No external API calls, must work offline" value="${escapeHtml(state.form.constraints)}" />
         </div>
       </div>
     </div>
@@ -193,6 +200,8 @@ function renderResult() {
 // ─── Event Binding ───
 
 function bindEvents() {
+  bindInputState();
+
   // File upload
   const fileInput = document.getElementById('fileInput');
   const uploadZone = document.getElementById('uploadZone');
@@ -204,6 +213,7 @@ function bindEvents() {
   }
 
   if (uploadZone) {
+    uploadZone.addEventListener('click', () => fileInput?.click());
     uploadZone.addEventListener('dragover', (e) => {
       e.preventDefault();
       uploadZone.classList.add('dragover');
@@ -261,8 +271,12 @@ function bindEvents() {
   const copyBtn = document.getElementById('copyBtn');
   if (copyBtn) {
     copyBtn.addEventListener('click', async () => {
-      await navigator.clipboard.writeText(state.result);
-      showToast('Copied to clipboard');
+      try {
+        await navigator.clipboard.writeText(state.result);
+        showToast('Copied to clipboard');
+      } catch {
+        showToast('Clipboard not available in this browser context');
+      }
     });
   }
 
@@ -275,6 +289,13 @@ function bindEvents() {
       state.validation = null;
       state.sessionId = null;
       state.files = [];
+      state.form = {
+        goal: '',
+        definitionOfDone: '',
+        skillName: '',
+        language: '',
+        constraints: '',
+      };
       render();
     });
   }
@@ -288,30 +309,99 @@ function bindEvents() {
 
 function addFiles(newFiles) {
   const allowed = ['.md', '.txt', '.json', '.pdf', '.xml', '.yaml', '.yml', '.docx'];
+  const maxFiles = 10;
+  const maxSizeBytes = 20 * 1024 * 1024;
+
+  if (state.files.length >= maxFiles) {
+    showToast(`Maximum ${maxFiles} files allowed`);
+    return;
+  }
+
+  const messages = [];
+
   for (const f of newFiles) {
     const ext = '.' + f.name.split('.').pop().toLowerCase();
-    if (allowed.includes(ext) && !state.files.find(x => x.name === f.name)) {
-      state.files.push(f);
+
+    if (state.files.length >= maxFiles) {
+      messages.push(`Stopped at ${maxFiles} files`);
+      break;
     }
+
+    if (!allowed.includes(ext)) {
+      messages.push(`${f.name}: unsupported file type`);
+      continue;
+    }
+
+    if (f.size > maxSizeBytes) {
+      messages.push(`${f.name}: exceeds 20MB`);
+      continue;
+    }
+
+    if (state.files.find(x => x.name === f.name && x.size === f.size)) {
+      messages.push(`${f.name}: already added`);
+      continue;
+    }
+
+    state.files.push(f);
   }
+
   render();
+
+  if (messages.length > 0) {
+    showToast(messages[0]);
+  }
+}
+
+function bindInputState() {
+  const fieldMap = [
+    ['goal', 'goal'],
+    ['dod', 'definitionOfDone'],
+    ['optName', 'skillName'],
+    ['optLang', 'language'],
+    ['optConstraints', 'constraints'],
+  ];
+
+  for (const [elementId, key] of fieldMap) {
+    const el = document.getElementById(elementId);
+    if (!el) continue;
+
+    el.addEventListener('input', (event) => {
+      state.form[key] = event.target.value;
+    });
+  }
+}
+
+function validateFormInput() {
+  const goal = state.form.goal.trim();
+  const skillName = state.form.skillName.trim();
+
+  if (!goal || goal.length < 10) {
+    return 'Please describe the skill goal (at least 10 characters)';
+  }
+
+  if (skillName && !/^[a-z0-9][a-z0-9-]{1,62}$/i.test(skillName)) {
+    return 'Skill Name must be 2-63 chars and use letters, numbers, and hyphens only';
+  }
+
+  return null;
 }
 
 // ─── API Calls ───
 
 async function handleGenerate() {
-  const goal = document.getElementById('goal')?.value?.trim();
-  const dod = document.getElementById('dod')?.value?.trim();
-
-  if (!goal || goal.length < 10) {
-    showToast('Please describe the skill goal (at least 10 characters)');
+  const validationError = validateFormInput();
+  if (validationError) {
+    showToast(validationError);
     return;
   }
 
+  const goal = state.form.goal.trim();
+  const dod = state.form.definitionOfDone.trim();
+
   const options = {};
-  const optName = document.getElementById('optName')?.value?.trim();
-  const optLang = document.getElementById('optLang')?.value?.trim();
-  const optConstraints = document.getElementById('optConstraints')?.value?.trim();
+  const optName = state.form.skillName.trim();
+  const optLang = state.form.language.trim();
+  const optConstraints = state.form.constraints.trim();
   if (optName) options.skillName = optName;
   if (optLang) options.language = optLang;
   if (optConstraints) options.additionalConstraints = optConstraints;
@@ -402,6 +492,8 @@ async function handleRefine() {
 // ─── Utilities ───
 
 function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+
   return str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

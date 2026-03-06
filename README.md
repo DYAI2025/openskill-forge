@@ -37,6 +37,25 @@ npm start
 
 Open http://localhost:3001
 
+## Skill Creation Flow (Dokumentiert)
+
+1. **Goal erfassen**: Der Nutzer beschreibt Ziel und gewünschtes Verhalten im Feld `Skill Goal`.
+2. **Definition of Done ergänzen** *(optional)*: Qualitätskriterien und Randbedingungen angeben.
+3. **Referenzdokumente hochladen** *(optional)*: Bis zu 10 Dateien, je max. 20MB (`md`, `txt`, `json`, `pdf`, `xml`, `yaml`, `yml`, `docx`).
+4. **Frontend-Validierung**: Vor dem Request werden Mindestlänge des Ziels, Dateitypen/-größe/-anzahl und Format des `Skill Name` geprüft.
+5. **Server-Validierung**: Backend prüft erneut `goal`, `options`-JSON, `skillName`-Format sowie Upload-Limits.
+6. **Generierung**:
+   - Mit API-Key: LLM-basierte Generierung + Validierung + optionales Auto-Refinement.
+   - Ohne API-Key: lokale, template-basierte Generierung mit lokaler Qualitätsprüfung.
+7. **Ergebnis**: SKILL.md-Vorschau, Quality Score, Issues-Liste, Download/Copy und Refine-Schritt.
+
+### Tatsächlich getestetes Verhalten
+
+- Ungültige Eingaben im Frontend werden als Toast blockiert (z. B. zu kurzes Ziel, ungültiger Skill-Name, nicht unterstützte Datei).
+- Backend liefert bei fehlerhaften Uploads/Options aussagekräftige 400-Fehler.
+- Ein valider `/api/generate`-Aufruf erzeugt ein vollständiges SKILL.md inkl. Frontmatter und Pflichtsektionen.
+- Das Verhalten ist in den unten gelisteten Testkommandos reproduzierbar dokumentiert.
+
 ## API
 
 ### `POST /api/generate`

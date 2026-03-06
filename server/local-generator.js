@@ -392,3 +392,40 @@ export function validateSkillLocally(skillContent) {
     summary: score >= 8 ? 'Skill meets quality standards' : score >= 5 ? 'Acceptable but could be improved' : 'Needs significant improvements',
   };
 }
+
+/**
+ * Local refinement of an existing skill using user feedback.
+ * Keeps deterministic behavior while still applying meaningful updates.
+ */
+export function refineSkillLocally(skillContent, feedback) {
+  const trimmedFeedback = (feedback || '').trim();
+  if (!trimmedFeedback) return skillContent;
+
+  let refined = skillContent;
+
+  const workflowSection = refined.match(/(##\s*(Workflow\s*\/\s*Instructions|Workflow|Instructions|Anweisungen)[\s\S]*?)(?=\n##\s|$)/i);
+  if (workflowSection) {
+    const workflowText = workflowSection[1];
+    const stepNumbers = [...workflowText.matchAll(/^\s*(\d+)\./gm)].map(m => Number(m[1]));
+    const nextStep = (stepNumbers.length ? Math.max(...stepNumbers) : 0) + 1;
+
+    const refinementStep = `
+
+${nextStep}. **Feedback-Driven Adjustment**
+   - Apply the requested refinement: ${trimmedFeedback}.
+   - Re-check consistency after applying the change.`;
+
+    refined = refined.replace(workflowText, `${workflowText}${refinementStep}`);
+  }
+
+  if (!/##\s*(Refinement Notes|Verfeinerungsnotizen)/i.test(refined)) {
+    refined += `
+
+## Refinement Notes
+- Latest feedback applied: ${trimmedFeedback}`;
+  } else {
+    refined = refined.replace(/(##\s*(Refinement Notes|Verfeinerungsnotizen)\s*\n)/i, `$1- Latest feedback applied: ${trimmedFeedback}\n`);
+  }
+
+  return refined;
+}

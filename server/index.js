@@ -9,7 +9,7 @@ import dotenv from 'dotenv';
 
 import { parseAllDocuments } from './parsers.js';
 import { generateSkill, validateSkill, refineSkill } from './llm-client.js';
-import { generateSkillLocally, validateSkillLocally } from './local-generator.js';
+import { generateSkillLocally, validateSkillLocally, refineSkillLocally } from './local-generator.js';
 
 dotenv.config();
 
@@ -48,11 +48,17 @@ const sessions = new Map();
  */
 const uploadMiddleware = (req, res, next) => {
   upload.array('files', 10)(req, res, (err) => {
-    if (err) {
-      // Ignore multer errors (e.g. no files), continue with empty files
-      req.files = req.files || [];
+    if (!err) return next();
+
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'Each file must be 20MB or smaller' });
     }
-    next();
+
+    if (err.code === 'LIMIT_FILE_COUNT') {
+      return res.status(400).json({ error: 'A maximum of 10 files is allowed' });
+    }
+
+    return res.status(400).json({ error: 'Invalid file upload. Supported types: md, txt, json, pdf, xml, yaml, yml, docx' });
   });
 };
 
@@ -60,10 +66,22 @@ app.post('/api/generate', uploadMiddleware, async (req, res) => {
   const sessionId = uuid();
   try {
     const { goal, definitionOfDone, options: optionsStr } = req.body;
-    const options = optionsStr ? JSON.parse(optionsStr) : {};
+
+    let options = {};
+    if (optionsStr) {
+      try {
+        options = JSON.parse(optionsStr);
+      } catch {
+        return res.status(400).json({ error: 'Invalid options JSON' });
+      }
+    }
 
     if (!goal || goal.trim().length < 10) {
       return res.status(400).json({ error: 'Goal must be at least 10 characters' });
+    }
+
+    if (options.skillName && !/^[a-z0-9][a-z0-9-]{1,62}$/i.test(options.skillName)) {
+      return res.status(400).json({ error: 'Skill Name must be 2-63 chars and use letters, numbers, and hyphens only' });
     }
 
     // Parse uploaded documents
@@ -156,9 +174,9 @@ app.post('/api/refine', async (req, res) => {
 
     let refined, validation;
     if (!hasValidApiKey()) {
-      // Local mode: can't truly refine, just return original with local validation
-      refined = skill; // In local mode, refinement is limited
-      validation = validateSkillLocally(skill);
+      // Local mode refinement: deterministic text updates based on feedback.
+      refined = refineSkillLocally(skill, feedback);
+      validation = validateSkillLocally(refined);
     } else {
       refined = await refineSkill(skill, issues);
       validation = await validateSkill(refined);
